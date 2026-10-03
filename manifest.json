@@ -1,9 +1,9 @@
 {
   "id": "hermes-video-mobile",
   "name": "Hermes Video Mobile",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "minAppVersion": "1.7.2",
-  "description": "HLS streaming player for Hermes videos on Obsidian Mobile.",
+  "description": "HLS streaming player with chapter posters for Hermes videos on Obsidian Mobile.",
   "author": "Lujie",
   "isDesktopOnly": false
 }

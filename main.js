@@ -47,6 +47,21 @@ function mp4ToHls(url) {
 }
 
 
+function mp4ToPoster(url) {
+    const u = new URL(url);
+
+    u.hash = "";
+    u.search = "";
+
+    u.pathname = u.pathname.replace(
+        /\.mp4$/i,
+        ".jpg"
+    );
+
+    return u.toString();
+}
+
+
 function pauseOthers(current) {
     document
         .querySelectorAll(
@@ -103,6 +118,14 @@ function createPlayer(mp4Url) {
 
     video.src =
         mp4ToHls(mp4Url);
+
+    video.poster =
+        mp4ToPoster(mp4Url);
+
+    video.setAttribute(
+        "poster",
+        mp4ToPoster(mp4Url)
+    );
 
     video.addEventListener(
         "play",
