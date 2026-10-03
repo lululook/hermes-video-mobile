@@ -1,689 +1,351 @@
 const {
     Plugin,
-    Platform,
-    requestUrl,
-    normalizePath,
-    Notice
+    Platform
 } = require("obsidian");
 
+const {
+    Decoration,
+    ViewPlugin,
+    WidgetType
+} = require("@codemirror/view");
 
-module.exports = class HermesVideoMobile extends Plugin {
-
-    async onload() {
-        const mobile =
-            Platform.isMobile ||
-            Platform.isIosApp ||
-            Platform.isAndroidApp;
-
-        // 电脑端什么都不做。
-        // 保留现有 Media Extended + CSS。
-        if (!mobile) {
-            return;
-        }
-
-        this.maxCacheBytes =
-            512 * 1024 * 1024;
-
-        this.cacheRoot = normalizePath(
-            `${this.app.vault.configDir}/plugins/` +
-            `${this.manifest.id}/cache`
-        );
-
-        await this.ensureDir(
-            this.cacheRoot
-        );
-
-        this.registerMarkdownPostProcessor(
-            async (el) => {
-                await this.processMedia(el);
-            }
-        );
-
-        this.addCommand({
-            id: "clear-video-cache",
-            name: "清理手机视频缓存",
-            callback: async () => {
-                await this.clearCache();
-            }
-        });
-    }
+const {
+    RangeSetBuilder
+} = require("@codemirror/state");
 
 
-    isHermesVideo(url) {
-        if (!url) {
-            return false;
-        }
-
-        try {
-            const parsed =
-                new URL(url);
-
-            return (
-                parsed.protocol === "https:" &&
-                parsed.host ===
-                    "ai.lujie.work:15007" &&
-                parsed.pathname
-                    .toLowerCase()
-                    .endsWith(".mp4")
-            );
-        } catch (_) {
-            return false;
-        }
-    }
+const MP4_PATTERN =
+    /!\[\]\((https:\/\/ai\.lujie\.work:15007\/video\/[^)\s]+\.mp4)\)/g;
 
 
-    hashUrl(value) {
-        let hash = 2166136261;
+function isMobile() {
+    return !!(
+        Platform.isMobile ||
+        Platform.isMobileApp ||
+        Platform.isIosApp ||
+        Platform.isAndroidApp
+    );
+}
 
-        for (
-            let i = 0;
-            i < value.length;
-            i++
-        ) {
-            hash ^= value.charCodeAt(i);
 
-            hash =
-                Math.imul(
-                    hash,
-                    16777619
-                );
-        }
+function isHermesMp4(url) {
+    if (!url) return false;
+
+    try {
+        const u = new URL(url);
 
         return (
-            hash >>> 0
-        ).toString(16);
+            u.protocol === "https:" &&
+            u.host === "ai.lujie.work:15007" &&
+            u.pathname.startsWith("/video/") &&
+            u.pathname.toLowerCase().endsWith(".mp4")
+        );
+    } catch (_) {
+        return false;
     }
+}
 
 
-    cachePath(url) {
-        return normalizePath(
-            `${this.cacheRoot}/` +
-            `${this.hashUrl(url)}.mp4`
-        );
-    }
+function toHls(url) {
+    const u = new URL(url);
 
+    u.hash = "";
+    u.search = "";
 
-    async ensureDir(path) {
-        const adapter =
-            this.app.vault.adapter;
+    u.pathname = u.pathname.replace(
+        /\/([^/]+)\.mp4$/i,
+        "/$1/index.m3u8"
+    );
 
-        const parts =
-            normalizePath(path)
-                .split("/")
-                .filter(Boolean);
+    return u.toString();
+}
 
-        let current = "";
 
-        for (const part of parts) {
-            current = current
-                ? `${current}/${part}`
-                : part;
-
-            if (
-                !await adapter.exists(
-                    current
-                )
-            ) {
-                try {
-                    await adapter.mkdir(
-                        current
-                    );
-                } catch (_) {
-                    // 目录可能被其他任务同时创建。
-                }
-            }
-        }
-    }
-
-
-    getRemoteUrl(node) {
-        if (
-            node instanceof
-            HTMLVideoElement
-        ) {
-            const direct =
-                node.getAttribute("src");
-
-            if (
-                this.isHermesVideo(
-                    direct
-                )
-            ) {
-                return direct;
-            }
-
-            const source =
-                node.querySelector(
-                    "source[src]"
-                );
-
-            if (source) {
-                const src =
-                    source.getAttribute(
-                        "src"
-                    );
-
-                if (
-                    this.isHermesVideo(
-                        src
-                    )
-                ) {
-                    return src;
-                }
-            }
-        }
-
-        if (
-            node instanceof
-            HTMLImageElement
-        ) {
-            const src =
-                node.getAttribute("src");
-
-            if (
-                this.isHermesVideo(
-                    src
-                )
-            ) {
-                return src;
-            }
-        }
-
-        if (
-            node instanceof
-            HTMLSourceElement
-        ) {
-            const src =
-                node.getAttribute("src");
-
-            if (
-                this.isHermesVideo(
-                    src
-                )
-            ) {
-                return src;
-            }
-        }
-
-        return null;
-    }
-
-
-    async processMedia(root) {
-        const nodes = Array.from(
-            root.querySelectorAll(
-                [
-                    "video[src]",
-                    "video source[src]",
-                    "img[src]"
-                ].join(",")
-            )
-        );
-
-        const handled =
-            new Set();
-
-        for (const node of nodes) {
-            const url =
-                this.getRemoteUrl(node);
-
-            if (!url) {
-                continue;
-            }
-
-            let target = node;
-
-            if (
-                node instanceof
-                HTMLSourceElement
-            ) {
-                target =
-                    node.closest("video")
-                    || node;
-            }
-
-            if (
-                handled.has(target)
-            ) {
-                continue;
-            }
-
-            if (
-                target.closest(
-                    ".hermes-video-mobile"
-                )
-            ) {
-                continue;
-            }
-
-            handled.add(target);
-
-            await this.renderPlayer(
-                target,
-                url
-            );
-        }
-    }
-
-
-    stopEditorActivation(container) {
-        const stop = (event) => {
-            event.stopPropagation();
-        };
-
-        container.addEventListener(
-            "pointerdown",
-            stop
-        );
-
-        container.addEventListener(
-            "mousedown",
-            stop
-        );
-
-        container.addEventListener(
-            "touchstart",
-            stop,
-            {
-                passive: true
-            }
-        );
-    }
-
-
-    async renderPlayer(
-        target,
-        url
-    ) {
-        const container =
-            document.createElement(
-                "div"
-            );
-
-        container.className =
-            "hermes-video-mobile";
-
-        container.dataset.url =
-            url;
-
-        this.stopEditorActivation(
-            container
-        );
-
-        target.replaceWith(
-            container
-        );
-
-        const path =
-            this.cachePath(url);
-
-        const adapter =
-            this.app.vault.adapter;
-
-        if (
-            await adapter.exists(path)
-        ) {
-            this.showVideo(
-                container,
-                path
-            );
-
-            return;
-        }
-
-        this.showLoadButton(
-            container,
-            url,
-            path
-        );
-    }
-
-
-    showLoadButton(
-        container,
-        url,
-        path
-    ) {
-        container.innerHTML = "";
-
-        const button =
-            document.createElement(
-                "button"
-            );
-
-        button.className =
-            "hermes-video-mobile-load";
-
-        button.type =
-            "button";
-
-        const title =
-            document.createElement(
-                "span"
-            );
-
-        title.className =
-            "hermes-video-mobile-title";
-
-        title.textContent =
-            "▶ 播放本章节";
-
-        const hint =
-            document.createElement(
-                "span"
-            );
-
-        hint.className =
-            "hermes-video-mobile-hint";
-
-        hint.textContent =
-            "首次播放按需缓存到手机";
-
-        button.appendChild(title);
-        button.appendChild(hint);
-
-        container.appendChild(
-            button
-        );
-
-        button.addEventListener(
-            "click",
-            async (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-
-                button.disabled =
-                    true;
-
-                title.textContent =
-                    "正在准备视频…";
-
-                hint.textContent =
-                    "只缓存当前章节";
-
-                try {
-                    await this.downloadVideo(
-                        url,
-                        path
-                    );
-
-                    await this.trimCache(
-                        path
-                    );
-
-                    const video =
-                        this.showVideo(
-                            container,
-                            path
-                        );
-
-                    try {
-                        await video.play();
-                    } catch (_) {
-                        // iOS 有时要求缓存完成后
-                        // 再点一次播放，这是正常行为。
-                    }
-
-                } catch (error) {
-                    button.disabled =
-                        false;
-
-                    title.textContent =
-                        "▶ 重试播放";
-
-                    hint.textContent =
-                        "视频缓存失败";
-
-                    new Notice(
-                        "Hermes 视频加载失败"
-                    );
-                }
-            }
-        );
-    }
-
-
-    async downloadVideo(
-        url,
-        path
-    ) {
-        const response =
-            await requestUrl({
-                url,
-                method: "GET"
-            });
-
-        if (
-            response.status < 200 ||
-            response.status >= 300
-        ) {
-            throw new Error(
-                `HTTP ${response.status}`
-            );
-        }
-
-        if (
-            !response.arrayBuffer ||
-            response.arrayBuffer
-                .byteLength < 1024
-        ) {
-            throw new Error(
-                "视频内容为空"
-            );
-        }
-
-        await this.ensureDir(
-            this.cacheRoot
-        );
-
-        await this.app.vault
-            .adapter
-            .writeBinary(
-                path,
-                response.arrayBuffer
-            );
-    }
-
-
-    showVideo(
-        container,
-        path
-    ) {
-        container.innerHTML = "";
-
-        const adapter =
-            this.app.vault.adapter;
-
-        const localUrl =
-            adapter.getResourcePath(
-                path
-            );
-
-        const video =
-            document.createElement(
-                "video"
-            );
-
-        video.className =
-            "hermes-video-mobile-player";
-
-        video.controls =
-            true;
-
-        video.autoplay =
-            false;
-
-        video.preload =
-            "metadata";
-
-        video.playsInline =
-            true;
-
-        video.setAttribute(
-            "playsinline",
-            ""
-        );
-
-        video.setAttribute(
-            "webkit-playsinline",
-            ""
-        );
-
-        video.src =
-            localUrl;
-
-        video.addEventListener(
-            "play",
-            () => {
-                this.pauseOtherVideos(
-                    video
-                );
-            }
-        );
-
-        container.appendChild(
-            video
-        );
-
-        return video;
-    }
-
-
-    pauseOtherVideos(
-        current
-    ) {
-        const videos =
-            document.querySelectorAll(
-                ".hermes-video-mobile-player"
-            );
-
-        for (
-            const video of videos
-        ) {
+function pauseOtherPlayers(current) {
+    document
+        .querySelectorAll("video.hermes-hls-player")
+        .forEach((video) => {
             if (
                 video !== current &&
                 !video.paused
             ) {
                 video.pause();
             }
+        });
+}
+
+
+function createPlayer(mp4Url) {
+    const wrapper =
+        document.createElement("div");
+
+    wrapper.className =
+        "hermes-hls-wrapper";
+
+    const video =
+        document.createElement("video");
+
+    video.className =
+        "hermes-hls-player";
+
+    video.controls = true;
+    video.autoplay = false;
+    video.defaultMuted = false;
+    video.muted = false;
+    video.playsInline = true;
+    video.preload = "metadata";
+
+    video.setAttribute(
+        "controls",
+        ""
+    );
+
+    video.setAttribute(
+        "playsinline",
+        ""
+    );
+
+    video.setAttribute(
+        "webkit-playsinline",
+        ""
+    );
+
+    video.src =
+        toHls(mp4Url);
+
+    video.addEventListener(
+        "play",
+        () => {
+            pauseOtherPlayers(
+                video
+            );
         }
+    );
+
+    /*
+     * 关键：
+     * 防止点击播放器时，
+     * CodeMirror 把焦点落回 Markdown 源码。
+     */
+    [
+        "pointerdown",
+        "mousedown",
+        "touchstart",
+        "click"
+    ].forEach((eventName) => {
+        wrapper.addEventListener(
+            eventName,
+            (event) => {
+                event.stopPropagation();
+            },
+            {
+                passive:
+                    eventName ===
+                    "touchstart"
+            }
+        );
+    });
+
+    wrapper.appendChild(
+        video
+    );
+
+    return wrapper;
+}
+
+
+class HermesVideoWidget
+    extends WidgetType {
+
+    constructor(url) {
+        super();
+        this.url = url;
     }
 
+    eq(other) {
+        return (
+            other.url ===
+            this.url
+        );
+    }
 
-    async trimCache(
-        keepPath
+    toDOM() {
+        return createPlayer(
+            this.url
+        );
+    }
+
+    ignoreEvent() {
+        /*
+         * 让视频控件自己处理点击，
+         * 不让编辑器抢事件。
+         */
+        return true;
+    }
+}
+
+
+function buildDecorations(view) {
+    const builder =
+        new RangeSetBuilder();
+
+    const doc =
+        view.state.doc;
+
+    for (
+        let lineNo = 1;
+        lineNo <= doc.lines;
+        lineNo++
     ) {
-        const adapter =
-            this.app.vault.adapter;
+        const line =
+            doc.line(lineNo);
 
-        let listing;
+        const text =
+            line.text;
 
-        try {
-            listing =
-                await adapter.list(
-                    this.cacheRoot
-                );
-        } catch (_) {
-            return;
-        }
+        MP4_PATTERN.lastIndex =
+            0;
 
-        const files = [];
+        let match;
 
-        let total = 0;
-
-        for (
-            const path of
-            listing.files
+        while (
+            (
+                match =
+                    MP4_PATTERN.exec(
+                        text
+                    )
+            ) !== null
         ) {
-            const stat =
-                await adapter.stat(
-                    path
-                );
+            const url =
+                match[1];
 
-            if (!stat) {
-                continue;
-            }
+            const from =
+                line.from +
+                match.index;
 
-            total +=
-                stat.size || 0;
+            const to =
+                from +
+                match[0].length;
 
-            files.push({
-                path,
-                size:
-                    stat.size || 0,
-                mtime:
-                    stat.mtime || 0
-            });
-        }
-
-        if (
-            total <=
-            this.maxCacheBytes
-        ) {
-            return;
-        }
-
-        files.sort(
-            (a, b) =>
-                a.mtime - b.mtime
-        );
-
-        for (
-            const file of files
-        ) {
-            if (
-                total <=
-                this.maxCacheBytes
-            ) {
-                break;
-            }
-
-            if (
-                file.path ===
-                keepPath
-            ) {
-                continue;
-            }
-
-            try {
-                await adapter.remove(
-                    file.path
-                );
-
-                total -=
-                    file.size;
-            } catch (_) {
-                // 忽略单文件清理失败
-            }
+            builder.add(
+                from,
+                to,
+                Decoration.replace({
+                    widget:
+                        new HermesVideoWidget(
+                            url
+                        )
+                })
+            );
         }
     }
 
+    return builder.finish();
+}
 
-    async clearCache() {
-        const adapter =
-            this.app.vault.adapter;
 
-        try {
-            if (
-                await adapter.exists(
-                    this.cacheRoot
-                )
-            ) {
-                await adapter.rmdir(
-                    this.cacheRoot,
-                    true
-                );
+const mobileEditorExtension =
+    ViewPlugin.fromClass(
+        class {
+
+            constructor(view) {
+                this.decorations =
+                    buildDecorations(
+                        view
+                    );
             }
-        } catch (_) {
-            // 继续重建目录
+
+            update(update) {
+                if (
+                    update.docChanged ||
+                    update.viewportChanged
+                ) {
+                    this.decorations =
+                        buildDecorations(
+                            update.view
+                        );
+                }
+            }
+        },
+        {
+            decorations:
+                value =>
+                    value.decorations
+        }
+    );
+
+
+module.exports =
+class HermesVideoMobile
+extends Plugin {
+
+    async onload() {
+
+        /*
+         * Mac/Windows/Linux：
+         * 完全不做任何事情。
+         */
+        if (!isMobile()) {
+            return;
         }
 
-        await this.ensureDir(
-            this.cacheRoot
+        /*
+         * Live Preview：
+         * 直接把 ![](xxx.mp4)
+         * 替换成 HLS 播放器。
+         */
+        this.registerEditorExtension(
+            mobileEditorExtension
         );
 
-        new Notice(
-            "Hermes 视频缓存已清理"
+        /*
+         * Reading View：
+         * 如果 Obsidian 已经把 MP4
+         * 当 img/video 渲染，
+         * 再替换成 HLS 播放器。
+         */
+        this.registerMarkdownPostProcessor(
+            (el) => {
+
+                const targets =
+                    Array.from(
+                        el.querySelectorAll(
+                            "img[src], video[src]"
+                        )
+                    );
+
+                for (
+                    const target
+                    of targets
+                ) {
+                    const src =
+                        target.getAttribute(
+                            "src"
+                        );
+
+                    if (
+                        !isHermesMp4(
+                            src
+                        )
+                    ) {
+                        continue;
+                    }
+
+                    if (
+                        target.closest(
+                            ".hermes-hls-wrapper"
+                        )
+                    ) {
+                        continue;
+                    }
+
+                    target.replaceWith(
+                        createPlayer(
+                            src
+                        )
+                    );
+                }
+            }
         );
     }
 };

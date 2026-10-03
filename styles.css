@@ -1,44 +1,21 @@
-.hermes-video-mobile {
+.hermes-hls-wrapper {
+    display: block;
     width: 100%;
-    margin: 0.75rem 0;
+    margin: 0.65rem 0;
     border-radius: 10px;
     overflow: hidden;
     background: #000;
 }
 
-.hermes-video-mobile-player {
+.hermes-hls-player {
     display: block;
     width: 100%;
     max-height: 70vh;
     background: #000;
-}
-
-.hermes-video-mobile-load {
-    width: 100%;
-    aspect-ratio: 16 / 9;
     border: 0;
-    border-radius: 10px;
-    background: #111;
-    color: #fff;
-    cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
 }
 
-.hermes-video-mobile-load:disabled {
-    cursor: wait;
-    opacity: 0.8;
-}
-
-.hermes-video-mobile-title {
-    font-size: 1rem;
-    font-weight: 600;
-}
-
-.hermes-video-mobile-hint {
-    font-size: 0.8rem;
-    opacity: 0.65;
+/* 手机上隐藏原生误判为图片的 MP4 占位符 */
+.is-mobile img[src*="ai.lujie.work:15007"][src$=".mp4"] {
+    display: none !important;
 }
