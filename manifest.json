@@ -1,0 +1,9 @@
+{
+  "id": "hermes-video-mobile",
+  "name": "Hermes Video Mobile",
+  "version": "0.1.0",
+  "minAppVersion": "1.7.2",
+  "description": "Play Hermes NAS chapter videos reliably on mobile with on-demand local cache.",
+  "author": "Lujie",
+  "isDesktopOnly": false
+}
