@@ -1,4 +1,4 @@
-.hermes-hls-wrapper {
+.hermes-mobile-video {
     display: block;
     width: 100%;
     margin: 0.65rem 0;
@@ -7,15 +7,14 @@
     background: #000;
 }
 
-.hermes-hls-player {
+.hermes-mobile-hls {
     display: block;
     width: 100%;
     max-height: 70vh;
     background: #000;
-    border: 0;
 }
 
-/* 手机上隐藏原生误判为图片的 MP4 占位符 */
-.is-mobile img[src*="ai.lujie.work:15007"][src$=".mp4"] {
-    display: none !important;
-}
+/*
+ * 不再全局隐藏 MP4。
+ * 只有插件成功替换后，原元素才会消失。
+ */

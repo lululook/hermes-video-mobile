@@ -3,20 +3,6 @@ const {
     Platform
 } = require("obsidian");
 
-const {
-    Decoration,
-    ViewPlugin,
-    WidgetType
-} = require("@codemirror/view");
-
-const {
-    RangeSetBuilder
-} = require("@codemirror/state");
-
-
-const MP4_PATTERN =
-    /!\[\]\((https:\/\/ai\.lujie\.work:15007\/video\/[^)\s]+\.mp4)\)/g;
-
 
 function isMobile() {
     return !!(
@@ -46,7 +32,7 @@ function isHermesMp4(url) {
 }
 
 
-function toHls(url) {
+function mp4ToHls(url) {
     const u = new URL(url);
 
     u.hash = "";
@@ -61,9 +47,11 @@ function toHls(url) {
 }
 
 
-function pauseOtherPlayers(current) {
+function pauseOthers(current) {
     document
-        .querySelectorAll("video.hermes-hls-player")
+        .querySelectorAll(
+            "video.hermes-mobile-hls"
+        )
         .forEach((video) => {
             if (
                 video !== current &&
@@ -80,18 +68,21 @@ function createPlayer(mp4Url) {
         document.createElement("div");
 
     wrapper.className =
-        "hermes-hls-wrapper";
+        "hermes-mobile-video";
+
+    wrapper.dataset.hermesUrl =
+        mp4Url;
 
     const video =
         document.createElement("video");
 
     video.className =
-        "hermes-hls-player";
+        "hermes-mobile-hls";
 
     video.controls = true;
     video.autoplay = false;
-    video.defaultMuted = false;
     video.muted = false;
+    video.defaultMuted = false;
     video.playsInline = true;
     video.preload = "metadata";
 
@@ -111,168 +102,142 @@ function createPlayer(mp4Url) {
     );
 
     video.src =
-        toHls(mp4Url);
+        mp4ToHls(mp4Url);
 
     video.addEventListener(
         "play",
         () => {
-            pauseOtherPlayers(
-                video
-            );
+            pauseOthers(video);
         }
     );
 
     /*
-     * 关键：
-     * 防止点击播放器时，
-     * CodeMirror 把焦点落回 Markdown 源码。
+     * 阻止点击播放器时把焦点交回编辑器。
      */
     [
         "pointerdown",
         "mousedown",
         "touchstart",
         "click"
-    ].forEach((eventName) => {
+    ].forEach((name) => {
         wrapper.addEventListener(
-            eventName,
+            name,
             (event) => {
                 event.stopPropagation();
             },
             {
                 passive:
-                    eventName ===
-                    "touchstart"
+                    name === "touchstart"
             }
         );
     });
 
-    wrapper.appendChild(
-        video
-    );
+    wrapper.appendChild(video);
 
     return wrapper;
 }
 
 
-class HermesVideoWidget
-    extends WidgetType {
+function getHermesUrl(node) {
+    if (!node) return null;
 
-    constructor(url) {
-        super();
-        this.url = url;
+    if (
+        node.matches &&
+        node.matches("img[src]")
+    ) {
+        const src =
+            node.getAttribute("src");
+
+        if (isHermesMp4(src)) {
+            return src;
+        }
     }
 
-    eq(other) {
-        return (
-            other.url ===
-            this.url
-        );
+    if (
+        node.matches &&
+        node.matches("video[src]")
+    ) {
+        const src =
+            node.getAttribute("src");
+
+        if (isHermesMp4(src)) {
+            return src;
+        }
     }
 
-    toDOM() {
-        return createPlayer(
-            this.url
-        );
+    if (
+        node.matches &&
+        node.matches("a[href]")
+    ) {
+        const href =
+            node.getAttribute("href");
+
+        if (isHermesMp4(href)) {
+            return href;
+        }
     }
 
-    ignoreEvent() {
-        /*
-         * 让视频控件自己处理点击，
-         * 不让编辑器抢事件。
-         */
-        return true;
-    }
+    return null;
 }
 
 
-function buildDecorations(view) {
-    const builder =
-        new RangeSetBuilder();
+function replaceNode(node) {
+    if (!node || !node.isConnected) {
+        return;
+    }
 
-    const doc =
-        view.state.doc;
+    if (
+        node.closest &&
+        node.closest(
+            ".hermes-mobile-video"
+        )
+    ) {
+        return;
+    }
+
+    const url =
+        getHermesUrl(node);
+
+    if (!url) {
+        return;
+    }
+
+    node.replaceWith(
+        createPlayer(url)
+    );
+}
+
+
+function scan(root) {
+    if (!root) return;
+
+    if (
+        root.nodeType === 1
+    ) {
+        replaceNode(root);
+    }
+
+    if (
+        !root.querySelectorAll
+    ) {
+        return;
+    }
+
+    const nodes =
+        root.querySelectorAll(
+            [
+                'img[src*="ai.lujie.work:15007"][src*=".mp4"]',
+                'video[src*="ai.lujie.work:15007"][src*=".mp4"]',
+                'a[href*="ai.lujie.work:15007"][href*=".mp4"]'
+            ].join(",")
+        );
 
     for (
-        let lineNo = 1;
-        lineNo <= doc.lines;
-        lineNo++
+        const node of nodes
     ) {
-        const line =
-            doc.line(lineNo);
-
-        const text =
-            line.text;
-
-        MP4_PATTERN.lastIndex =
-            0;
-
-        let match;
-
-        while (
-            (
-                match =
-                    MP4_PATTERN.exec(
-                        text
-                    )
-            ) !== null
-        ) {
-            const url =
-                match[1];
-
-            const from =
-                line.from +
-                match.index;
-
-            const to =
-                from +
-                match[0].length;
-
-            builder.add(
-                from,
-                to,
-                Decoration.replace({
-                    widget:
-                        new HermesVideoWidget(
-                            url
-                        )
-                })
-            );
-        }
+        replaceNode(node);
     }
-
-    return builder.finish();
 }
-
-
-const mobileEditorExtension =
-    ViewPlugin.fromClass(
-        class {
-
-            constructor(view) {
-                this.decorations =
-                    buildDecorations(
-                        view
-                    );
-            }
-
-            update(update) {
-                if (
-                    update.docChanged ||
-                    update.viewportChanged
-                ) {
-                    this.decorations =
-                        buildDecorations(
-                            update.view
-                        );
-                }
-            }
-        },
-        {
-            decorations:
-                value =>
-                    value.decorations
-        }
-    );
 
 
 module.exports =
@@ -282,70 +247,71 @@ extends Plugin {
     async onload() {
 
         /*
-         * Mac/Windows/Linux：
-         * 完全不做任何事情。
+         * 桌面端完全不接管。
          */
         if (!isMobile()) {
             return;
         }
 
         /*
-         * Live Preview：
-         * 直接把 ![](xxx.mp4)
-         * 替换成 HLS 播放器。
-         */
-        this.registerEditorExtension(
-            mobileEditorExtension
-        );
-
-        /*
-         * Reading View：
-         * 如果 Obsidian 已经把 MP4
-         * 当 img/video 渲染，
-         * 再替换成 HLS 播放器。
+         * Reading View。
          */
         this.registerMarkdownPostProcessor(
             (el) => {
-
-                const targets =
-                    Array.from(
-                        el.querySelectorAll(
-                            "img[src], video[src]"
-                        )
-                    );
-
-                for (
-                    const target
-                    of targets
-                ) {
-                    const src =
-                        target.getAttribute(
-                            "src"
-                        );
-
-                    if (
-                        !isHermesMp4(
-                            src
-                        )
-                    ) {
-                        continue;
-                    }
-
-                    if (
-                        target.closest(
-                            ".hermes-hls-wrapper"
-                        )
-                    ) {
-                        continue;
-                    }
-
-                    target.replaceWith(
-                        createPlayer(
-                            src
-                        )
-                    );
-                }
+                scan(el);
             }
+        );
+
+        /*
+         * Live Preview：
+         * 观察 Obsidian 渲染出来的 DOM，
+         * 找到远程 MP4 后直接换成 HLS。
+         */
+        const observer =
+            new MutationObserver(
+                (mutations) => {
+
+                    for (
+                        const mutation
+                        of mutations
+                    ) {
+                        for (
+                            const node
+                            of mutation.addedNodes
+                        ) {
+                            scan(node);
+                        }
+                    }
+                }
+            );
+
+        observer.observe(
+            document.body,
+            {
+                childList: true,
+                subtree: true
+            }
+        );
+
+        this.register(() => {
+            observer.disconnect();
+        });
+
+        /*
+         * 插件启动时处理已经存在的页面。
+         */
+        setTimeout(
+            () => {
+                scan(document.body);
+            },
+            300
+        );
+
+        setTimeout(
+            () => {
+                scan(document.body);
+            },
+            1200
         );
     }
 };
